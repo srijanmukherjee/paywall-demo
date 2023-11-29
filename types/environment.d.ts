@@ -8,6 +8,8 @@ declare global {
 			MONGO_CONNECTION_URI: string;
 			JWT_TOKEN_SECRET: string;
 			JWT_EXPIRE: string;
+			STRIPE_SECRET_KEY: string;
+			STRIPE_WEBHOOK_SECRET: string;
 		}
 	}
 }

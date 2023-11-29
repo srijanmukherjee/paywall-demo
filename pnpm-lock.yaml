@@ -38,6 +38,9 @@ dependencies:
   resend:
     specifier: ^2.0.0
     version: 2.0.0
+  stripe:
+    specifier: ^14.5.0
+    version: 14.5.0
   typescript:
     specifier: ^5.3.2
     version: 5.3.2
@@ -2432,6 +2435,14 @@ packages:
     resolution: {integrity: sha512-6fPc+R4ihwqP6N/aIv2f1gMH8lOVtWQHoqC4yK6oSDVVocumAsfCqjkXnqiYMhmMwS/mEHLp7Vehlt3ql6lEig==}
     engines: {node: '>=8'}
     dev: true
+
+  /stripe@14.5.0:
+    resolution: {integrity: sha512-MTt0P0VYDAj2VZyZMW41AxcXVs9s06EDFIHYat4UUkluJgnBHo4T4E2byPhnxoJCPvdzWBwBLnhWbSOg//VTpA==}
+    engines: {node: '>=12.*'}
+    dependencies:
+      '@types/node': 20.10.0
+      qs: 6.11.0
+    dev: false
 
   /supports-color@5.5.0:
     resolution: {integrity: sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow==}
