@@ -21,6 +21,8 @@ import UserCredits from "./models/userCredits";
 import Stripe from "stripe";
 import CreditTransaction from "./models/creditTransaction";
 import mongoose from "mongoose";
+import ResourceModel, { IResourceData } from "./models/resource";
+import ResourceTransactionModel from "./models/resourceTransaction";
 
 const port = process.env.SERVER_PORT || DEFAULT_PORT;
 const app = express();
@@ -99,33 +101,39 @@ function resolve(fn: (req: Request, res: Response, next: NextFunction) => Promis
 	};
 }
 
-function authenticate(req: Request, res: Response, next: NextFunction) {
+async function authenticationHelper(req: Request): Promise<InstanceType<typeof UserAccount>> {
 	const authHeader = req.get("Authorization");
-	if (!authHeader || !authHeader.startsWith("Bearer ")) return res.status(401).json({ error: "No credentials" });
+	if (!authHeader || !authHeader.startsWith("Bearer ")) throw new Error("No credentials");
 
 	const token = authHeader.split(" ")[1];
 	let payload;
 	try {
 		payload = jwt.verify(token, process.env.JWT_TOKEN_SECRET);
 
-		if (typeof payload === "string") return res.status(403).json({ error: "Invalid payload" });
+		if (typeof payload === "string") throw new Error();
 	} catch (err) {
-		return res.status(403).json({ error: "Invalid token" });
+		throw new Error("Invalid token");
 	}
 
 	const { email } = payload;
-	if (!email) return res.status(403).json({ error: "Invalid payload" });
+	if (!email) throw new Error("Invalid payload");
 
-	UserAccount.findOne({ email })
+	const user = await UserAccount.findOne({ email });
+	if (!user) {
+		throw new Error("Invalid token");
+	}
+
+	return user;
+}
+
+function authenticate(req: Request, res: Response, next: NextFunction) {
+	authenticationHelper(req)
 		.then((user) => {
-			if (!user) {
-				return res.status(403).json({ error: "Invalid token" });
-			}
 			req.user = user;
 			next();
 		})
-		.catch(() => {
-			return res.status(403).json({ error: "Invalid token" });
+		.catch((err: Error) => {
+			return res.status(401).json({ error: err.message });
 		});
 }
 
@@ -448,44 +456,243 @@ app.get(
 	})
 );
 
+// TODO
 app.get("/packages/transactions/:id", (req, res) => {
 	res.json({
 		message: "Not implemented",
 	});
 });
 
-app.get("/resources", (req, res) => {
-	res.json({
-		message: "Not implemented",
-	});
-});
+app.get(
+	"/resources",
+	resolve(async (req, res) => {
+		const resources = await ResourceModel.find({});
+		const resourcesDto = resources.map((r) => ({
+			id: r.id,
+			cost: r.cost,
+			name: r.name,
+			description: r.description,
+			createdAt: r.createdAt,
+			updatedAt: r.updatedAt,
+		}));
+		res.json(resourcesDto);
+	})
+);
 
-app.get("/resources/:id", (req, res) => {
-	res.json({
-		message: "Not implemented",
-	});
-});
+// TODO: authorize
+app.post(
+	"/resources",
+	authenticate,
+	/* authorize("admin"),*/ resolve(async (req, res) => {
+		const { cost, name, description, data }: { cost: number; name: string; description?: string; data: IResourceData } = req.body;
 
-app.post("/resources/:id/buy", (req, res) => {
-	res.json({
-		message: "Not implemented",
-	});
-});
+		if (cost === undefined || cost === null) {
+			throw new Error("resource cost is required");
+		}
 
-app.get("/resources/transactions", (req, res) => {
-	res.json({
-		message: "Not implemented",
-	});
-});
+		if (isString(cost) || isNaN(cost) || !Number.isInteger(cost)) {
+			throw new Error("expected cost to be a number");
+		}
+
+		if (cost < 0) {
+			throw new Error("cost must be >= 0");
+		}
+
+		if (!name) {
+			throw new Error("resource name is required");
+		}
+
+		if (!isString(name)) {
+			throw new Error("resource name must be a string");
+		}
+
+		if (name.length < 5) {
+			throw new Error("resource name must be atleast 5 characters long");
+		}
+
+		if (description && !isString(description)) {
+			throw new Error("resource description must be a string");
+		}
+
+		if (!data) {
+			throw new Error("resource data is required");
+		}
+
+		if (!data.title) {
+			throw new Error("resource data title is missing");
+		}
+
+		if (!isString(data.title)) {
+			throw new Error("resource datat title must be string");
+		}
+
+		if (!data.content) {
+			throw new Error("resource data content is missing");
+		}
+
+		if (!isString(data.content)) {
+			throw new Error("resouce data content must be a string");
+		}
+
+		const resource = await ResourceModel.create({
+			cost,
+			name,
+			description,
+			data,
+		});
+
+		return res.json({
+			id: resource.id,
+			cost: resource.cost,
+			name: resource.name,
+			description: resource.description,
+			data: resource.data,
+			createdAt: resource.createdAt,
+			updatedAt: resource.updatedAt,
+		});
+	})
+);
+
+app.get(
+	"/resources/:id",
+	resolve(async (req, res) => {
+		const id = req.params.id as string;
+
+		const resource = await ResourceModel.findOne({ id });
+		if (!resource) {
+			res.status(404);
+			throw new Error("Resource not found");
+		}
+
+		if (resource.cost === 0) {
+			return res.json({
+				id: resource.id,
+				cost: resource.cost,
+				name: resource.name,
+				description: resource.description,
+				data: resource.data,
+				createdAt: resource.createdAt,
+				updatedAt: resource.updatedAt,
+			});
+		} else {
+			await authenticationHelper(req)
+				.then(async (user) => {
+					const transaction = await ResourceTransactionModel.findOne({
+						resourceId: resource.id,
+						uid: user.id,
+					});
+
+					if (!transaction) {
+						throw new Error("User doesn't have access to this resource. Consider buying");
+					}
+
+					return res.json({
+						id: resource.id,
+						cost: resource.cost,
+						name: resource.name,
+						data: resource.data,
+						description: resource.description,
+						createdAt: resource.createdAt,
+						updatedAt: resource.updatedAt,
+					});
+				})
+				.catch(() => {
+					return res.json({
+						id: resource.id,
+						cost: resource.cost,
+						name: resource.name,
+						description: resource.description,
+						createdAt: resource.createdAt,
+						updatedAt: resource.updatedAt,
+					});
+				});
+		}
+	})
+);
+
+// TODO: separate user bought items and the transaction itself
+app.post(
+	"/resources/:id/buy",
+	authenticate,
+	resolve(async (req, res) => {
+		const id = req.params.id as string;
+		const resource = await ResourceModel.findOne({ id });
+		if (!resource) {
+			res.status(404);
+			throw new Error("Resource not found");
+		}
+
+		// check if already bought
+		const alreadyBought = await ResourceTransactionModel.exists({ resourceId: id, uid: req.user.id });
+		if (alreadyBought) {
+			return res.json({
+				message: "Already bought",
+			});
+		}
+
+		const userCredits = await UserCredits.findOne({ uid: req.user.id });
+
+		// make sure user has enough credits
+		if (!userCredits || userCredits.credits < resource.cost) {
+			return res.json({
+				message: "Not enough balance",
+			});
+		}
+
+		const transaction = await ResourceTransactionModel.create({
+			resourceId: resource.id,
+			uid: req.user.id,
+			credits: resource.cost,
+		});
+
+		if (!transaction) {
+			throw new Error("Transaction failed");
+		}
+
+		try {
+			await UserCredits.updateOne(
+				{ uid: req.user.id },
+				{
+					$inc: {
+						credits: -resource.cost,
+					},
+				},
+				{
+					runValidators: true,
+				}
+			);
+		} catch (err) {
+			throw new Error("Transaction failed");
+		}
+
+		return res.json(transaction);
+	})
+);
+
+app.get(
+	"/transactions",
+	authenticate,
+	resolve(async (req, res) => {
+		const transactions = await ResourceTransactionModel.find({ uid: req.user.id });
+		const transactionDto = transactions.map((t) => ({
+			tnx_id: t.id,
+			resourceId: t.resourceId,
+			credits: t.credits,
+			createdAt: t.createdAt,
+		}));
+		res.json(transactionDto);
+	})
+);
 
 app.use((err: any, req: Request, res: Response, next: any) => {
 	let error: any = "Something went wrong";
 	if (err.message?.length) {
 		error = err.message;
 	}
-	res.status(500).json({
+	const statusCode = res.statusCode !== 200 ? res.statusCode : 500;
+	res.status(statusCode).json({
 		error,
-		statusCode: 500,
+		statusCode,
 	});
 	next();
 });
